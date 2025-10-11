@@ -1,0 +1,10 @@
+{
+  "name": "laplace-userscripts",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
