@@ -249,7 +249,8 @@ let replacementMap = null
             每10分钟会自动同步云端替换规则
           </div>
           <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap; margin-bottom: .5em;">
-            <button id="syncRemoteBtn" style="padding: .25em .75em;">同步</button>
+            <button id="syncRemoteBtn">同步</button>
+            <button id="testBlockBtn">屏蔽测试</button>
             <span id="remoteKeywordsStatus" style="color: #666;">未同步</span>
           </div>
           <div id="remoteKeywordsInfo" style="color: #666;"></div>
@@ -264,7 +265,7 @@ let replacementMap = null
             <input id="replaceFrom" placeholder="替换前" style="flex: 1; min-width: 80px;" />
             <span>→</span>
             <input id="replaceTo" placeholder="替换后" style="flex: 1; min-width: 80px;" />
-            <button id="addRuleBtn" style="padding: .25em .5em;">添加</button>
+            <button id="addRuleBtn">添加</button>
           </div>
         </div>
       </div>
@@ -733,6 +734,245 @@ let replacementMap = null
     // Manual sync button
     syncRemoteBtn.addEventListener('click', () => {
       syncRemoteKeywords()
+    })
+
+    /** @type {HTMLButtonElement} */
+    const testBlockBtn = document.getElementById('testBlockBtn')
+
+    /**
+     * Tests a single keyword pair
+     * @param {string} originalKeyword - The original keyword to test
+     * @param {string} replacedKeyword - The replacement keyword
+     * @param {number} roomId - The room ID
+     * @param {string} csrfToken - The CSRF token
+     * @returns {Promise<{originalBlocked: boolean, replacedBlocked: boolean, originalError?: string, replacedError?: string}>}
+     */
+    async function testKeywordPair(originalKeyword, replacedKeyword, roomId, csrfToken) {
+      const originalResult = await sendDanmaku(originalKeyword, roomId, csrfToken)
+      let replacedResult = null
+
+      if (!originalResult.success) {
+        // Wait 3 seconds before testing replaced keyword
+        await new Promise(r => setTimeout(r, 2000))
+        replacedResult = await sendDanmaku(replacedKeyword, roomId, csrfToken)
+      }
+
+      return {
+        originalBlocked: !originalResult.success,
+        replacedBlocked: replacedResult ? !replacedResult.success : null,
+        originalError: originalResult.error,
+        replacedError: replacedResult?.error,
+      }
+    }
+
+    /**
+     * Tests all replacement keywords to check if they are blocked
+     * @returns {Promise<void>}
+     */
+    async function testBlockedKeywords() {
+      const confirmed = confirm(
+        '即将测试当前直播间的云端替换词与本地替换词，请避免在当前直播间正在直播时进行测试，否则可能会给主播造成困扰，是否继续？'
+      )
+
+      if (!confirmed) {
+        return
+      }
+
+      testBlockBtn.disabled = true
+      testBlockBtn.textContent = '测试中…'
+
+      try {
+        // Ensure we have room ID
+        if (cachedRoomId === null) {
+          cachedRoomId = await getRoomId()
+        }
+        const roomId = cachedRoomId
+        const csrfToken = getCsrfToken()
+
+        if (!csrfToken) {
+          appendToLimitedLog(msgLogs, '❌ 未找到登录信息，请先登录 Bilibili', maxLogLines)
+          return
+        }
+
+        // Collect keywords by source
+        const remoteKeywords = GM_getValue('remoteKeywords', null)
+        const globalKeywords = []
+        const roomKeywords = []
+        const localRules = GM_getValue('replacementRules', [])
+
+        if (remoteKeywords) {
+          // Global keywords
+          const globalKw = remoteKeywords.global?.keywords || {}
+          for (const [from, to] of Object.entries(globalKw)) {
+            if (from) {
+              globalKeywords.push({ from, to })
+            }
+          }
+
+          // Room-specific keywords
+          const roomData = remoteKeywords.rooms?.find(r => r.room === cachedRoomId)
+          const roomKw = roomData?.keywords || {}
+          for (const [from, to] of Object.entries(roomKw)) {
+            if (from) {
+              roomKeywords.push({ from, to })
+            }
+          }
+        }
+
+        const totalCount = globalKeywords.length + roomKeywords.length + localRules.length
+        appendToLimitedLog(
+          msgLogs,
+          `🔵 开始测试 ${totalCount} 个替换词（全局 ${globalKeywords.length} + 房间 ${roomKeywords.length} + 本地 ${localRules.length}）`,
+          maxLogLines
+        )
+
+        let testedCount = 0
+        let totalBlockedCount = 0
+
+        // Test global keywords
+        if (globalKeywords.length > 0) {
+          appendToLimitedLog(msgLogs, `\n📡 测试云端全局替换词 (${globalKeywords.length} 个)`, maxLogLines)
+          let blockedCount = 0
+
+          for (const { from, to } of globalKeywords) {
+            testedCount++
+            appendToLimitedLog(msgLogs, `[${testedCount}/${totalCount}] 测试: ${from}`, maxLogLines)
+
+            const result = await testKeywordPair(from, to, roomId, csrfToken)
+
+            if (result.originalBlocked) {
+              blockedCount++
+              totalBlockedCount++
+              appendToLimitedLog(
+                msgLogs,
+                `  ✅ 原词被屏蔽 (错误: ${result.originalError})，测试替换词: ${to}`,
+                maxLogLines
+              )
+
+              if (result.replacedBlocked) {
+                appendToLimitedLog(msgLogs, `  ❌ 替换词也被屏蔽 (错误: ${result.replacedError})`, maxLogLines)
+              } else {
+                appendToLimitedLog(msgLogs, `  ✅ 替换词未被屏蔽`, maxLogLines)
+              }
+            } else {
+              appendToLimitedLog(msgLogs, `  ⚠️ 原词未被屏蔽，请考虑提交贡献词条`, maxLogLines)
+            }
+
+            // Wait 3 seconds before next test
+            if (testedCount < totalCount) {
+              await new Promise(r => setTimeout(r, 2000))
+            }
+          }
+
+          appendToLimitedLog(
+            msgLogs,
+            `📡 全局替换词测试完成：${blockedCount}/${globalKeywords.length} 个原词被屏蔽`,
+            maxLogLines
+          )
+        }
+
+        // Test room-specific keywords
+        if (roomKeywords.length > 0) {
+          appendToLimitedLog(msgLogs, `\n🏠 测试云端房间专属替换词 (${roomKeywords.length} 个)`, maxLogLines)
+          let blockedCount = 0
+
+          for (const { from, to } of roomKeywords) {
+            testedCount++
+            appendToLimitedLog(msgLogs, `[${testedCount}/${totalCount}] 测试: ${from}`, maxLogLines)
+
+            const result = await testKeywordPair(from, to, roomId, csrfToken)
+
+            if (result.originalBlocked) {
+              blockedCount++
+              totalBlockedCount++
+              appendToLimitedLog(
+                msgLogs,
+                `  ✅ 原词被屏蔽 (错误: ${result.originalError})，测试替换词: ${to}`,
+                maxLogLines
+              )
+
+              if (result.replacedBlocked) {
+                appendToLimitedLog(msgLogs, `  ❌ 替换词也被屏蔽 (错误: ${result.replacedError})`, maxLogLines)
+              } else {
+                appendToLimitedLog(msgLogs, `  ✅ 替换词未被屏蔽`, maxLogLines)
+              }
+            } else {
+              appendToLimitedLog(msgLogs, `  ⚠️ 原词未被屏蔽，请考虑提交贡献词条`, maxLogLines)
+            }
+
+            // Wait 3 seconds before next test
+            if (testedCount < totalCount) {
+              await new Promise(r => setTimeout(r, 2000))
+            }
+          }
+
+          appendToLimitedLog(
+            msgLogs,
+            `🏠 房间专属替换词测试完成：${blockedCount}/${roomKeywords.length} 个原词被屏蔽`,
+            maxLogLines
+          )
+        }
+
+        // Test local rules
+        if (localRules.length > 0) {
+          appendToLimitedLog(msgLogs, `\n💾 测试本地替换词 (${localRules.length} 个)`, maxLogLines)
+          let blockedCount = 0
+
+          for (const rule of localRules) {
+            if (!rule.from) continue
+
+            testedCount++
+            appendToLimitedLog(msgLogs, `[${testedCount}/${totalCount}] 测试: ${rule.from}`, maxLogLines)
+
+            const result = await testKeywordPair(rule.from, rule.to, roomId, csrfToken)
+
+            if (result.originalBlocked) {
+              blockedCount++
+              totalBlockedCount++
+              appendToLimitedLog(
+                msgLogs,
+                `  ✅ 原词被屏蔽 (错误: ${result.originalError})，测试替换词: ${rule.to}`,
+                maxLogLines
+              )
+
+              if (result.replacedBlocked) {
+                appendToLimitedLog(msgLogs, `  ❌ 替换词也被屏蔽 (错误: ${result.replacedError})`, maxLogLines)
+              } else {
+                appendToLimitedLog(msgLogs, `  ✅ 替换词未被屏蔽`, maxLogLines)
+              }
+            } else {
+              appendToLimitedLog(msgLogs, `  ⚠️ 原词未被屏蔽，请考虑提交贡献词条`, maxLogLines)
+            }
+
+            // Wait 3 seconds before next test
+            if (testedCount < totalCount) {
+              await new Promise(r => setTimeout(r, 2000))
+            }
+          }
+
+          appendToLimitedLog(
+            msgLogs,
+            `💾 本地替换词测试完成：${blockedCount}/${localRules.length} 个原词被屏蔽`,
+            maxLogLines
+          )
+        }
+
+        appendToLimitedLog(
+          msgLogs,
+          `\n🔵 全部测试完成！共测试 ${totalCount} 个词，其中 ${totalBlockedCount} 个原词被屏蔽`,
+          maxLogLines
+        )
+      } catch (error) {
+        appendToLimitedLog(msgLogs, `🔴 测试出错：${error.message}`, maxLogLines)
+      } finally {
+        testBlockBtn.disabled = false
+        testBlockBtn.textContent = '屏蔽测试'
+      }
+    }
+
+    // Test block button
+    testBlockBtn.addEventListener('click', () => {
+      testBlockedKeywords()
     })
 
     // Set the callback for when room ID is ready
