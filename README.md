@@ -2,4 +2,4 @@
 
 ## License
 
-AGPLv3
+AGPL-3.0

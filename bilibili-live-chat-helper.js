@@ -4,7 +4,7 @@
 // @version      2.0.1
 // @description  这是 bilibili 直播间简易版独轮车，基于 quiet/thusiant cmd 版本 https://greasyfork.org/scripts/421507 继续维护而来
 // @author       laplace-live
-// @license      AGPL
+// @license      AGPL-3.0
 // @icon         https://laplace.live/favicon.ico
 // @match        *://live.bilibili.com/*
 // @grant        GM_setValue
