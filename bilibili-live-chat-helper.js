@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LAPLACE 弹幕助手 - 哔哩哔哩直播间独轮车、弹幕发送
 // @namespace    https://greasyfork.org/users/1524935
-// @version      2.0.2
+// @version      2.0.3
 // @description  这是 bilibili 直播间简易版独轮车，基于 quiet/thusiant cmd 版本 https://greasyfork.org/scripts/421507 继续维护而来
 // @author       laplace-live
 // @license      AGPL-3.0
@@ -246,7 +246,7 @@ let replacementMap = null
             <a href="https://github.com/laplace-live/public/blob/master/artifacts/livesrtream-keywords.json" target="_blank" style="color: #288bb8; text-decoration: none;">我要贡献规则</a>
           </div>
           <div style="margin-block: .5em; color: #666;">
-            每15分钟会自动同步云端替换规则
+            每10分钟会自动同步云端替换规则
           </div>
           <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap; margin-bottom: .5em;">
             <button id="syncRemoteBtn" style="padding: .25em .75em;">同步</button>
@@ -630,9 +630,11 @@ let replacementMap = null
 
     // ===== Remote Keywords Sync =====
 
+    // const REMOTE_KEYWORDS_URL =
+    //   'https://raw.githubusercontent.com/laplace-live/public/refs/heads/master/artifacts/livesrtream-keywords.json'
     const REMOTE_KEYWORDS_URL =
-      'https://raw.githubusercontent.com/laplace-live/public/refs/heads/master/artifacts/livesrtream-keywords.json'
-    const SYNC_INTERVAL = 15 * 60 * 1000 // 15 minutes in milliseconds
+      'https://workers.vrp.moe/gh-raw/laplace-live/public/master/artifacts/livesrtream-keywords.json'
+    const SYNC_INTERVAL = 10 * 60 * 1000 // 10 minutes in milliseconds
 
     /** @type {HTMLButtonElement} */
     const syncRemoteBtn = document.getElementById('syncRemoteBtn')
