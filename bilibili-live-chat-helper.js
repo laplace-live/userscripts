@@ -257,7 +257,7 @@ let replacementMap = null
         </div>
 
         <!-- Local Replacement Rules -->
-        <div style="margin: .5em 0;">
+        <div style="margin: .5em 0; padding-bottom: .5em; border-bottom: 1px solid #eee;">
           <div style="font-weight: bold; margin-bottom: .5em;">本地规则替换</div>
           <div style="margin-block: .5em; color: #666;">规则从上至下执行；本地规则总是最后执行</div>
           <div id="replacementRulesList" style="margin-bottom: .5em; max-height: 160px; overflow-y: auto;"></div>
@@ -266,6 +266,16 @@ let replacementMap = null
             <span>→</span>
             <input id="replaceTo" placeholder="替换后" style="flex: 1; min-width: 80px;" />
             <button id="addRuleBtn">添加</button>
+          </div>
+        </div>
+
+        <!-- Log Settings -->
+        <div style="margin: .5em 0;">
+          <div style="font-weight: bold; margin-bottom: .5em;">日志设置</div>
+          <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap;">
+            <label for="maxLogLinesInput" style="color: #666;">最大日志行数:</label>
+            <input id="maxLogLinesInput" type="number" min="1" max="1000" value="${GM_getValue('maxLogLines')}" style="width: 80px;" />
+            <span style="color: #999; font-size: 0.9em;">(1-1000)</span>
           </div>
         </div>
       </div>
@@ -973,6 +983,21 @@ let replacementMap = null
     // Test block button
     testBlockBtn.addEventListener('click', () => {
       testBlockedKeywords()
+    })
+
+    // Max log lines input
+    /** @type {HTMLInputElement} */
+    const maxLogLinesInput = document.getElementById('maxLogLinesInput')
+    maxLogLinesInput.addEventListener('change', () => {
+      let value = Number.parseInt(maxLogLinesInput.value, 10)
+      // Validate range
+      if (Number.isNaN(value) || value < 1) {
+        value = 1
+      } else if (value > 1000) {
+        value = 1000
+      }
+      maxLogLinesInput.value = value.toString()
+      GM_setValue('maxLogLines', value)
     })
 
     // Set the callback for when room ID is ready
