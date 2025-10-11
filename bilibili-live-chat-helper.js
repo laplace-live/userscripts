@@ -250,7 +250,7 @@ let replacementMap = null
           </div>
           <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap; margin-bottom: .5em;">
             <button id="syncRemoteBtn">同步</button>
-            <button id="testBlockBtn">屏蔽测试</button>
+            <button id="testRemoteBtn">测试云端词库</button>
             <span id="remoteKeywordsStatus" style="color: #666;">未同步</span>
           </div>
           <div id="remoteKeywordsInfo" style="color: #666;"></div>
@@ -258,7 +258,10 @@ let replacementMap = null
 
         <!-- Local Replacement Rules -->
         <div style="margin: .5em 0; padding-bottom: .5em; border-bottom: 1px solid #eee;">
-          <div style="font-weight: bold; margin-bottom: .5em;">本地规则替换</div>
+          <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap; margin-bottom: .5em;">
+            <div style="font-weight: bold;">本地规则替换</div>
+            <button id="testLocalBtn">测试本地词库</button>
+          </div>
           <div style="margin-block: .5em; color: #666;">规则从上至下执行；本地规则总是最后执行</div>
           <div id="replacementRulesList" style="margin-bottom: .5em; max-height: 160px; overflow-y: auto;"></div>
           <div style="display: flex; gap: .25em; align-items: center; flex-wrap: wrap;">
@@ -746,8 +749,7 @@ let replacementMap = null
       syncRemoteKeywords()
     })
 
-    /** @type {HTMLButtonElement} */
-    const testBlockBtn = document.getElementById('testBlockBtn')
+    // ===== Keyword Testing Utilities =====
 
     /**
      * Tests a single keyword pair
@@ -755,14 +757,14 @@ let replacementMap = null
      * @param {string} replacedKeyword - The replacement keyword
      * @param {number} roomId - The room ID
      * @param {string} csrfToken - The CSRF token
-     * @returns {Promise<{originalBlocked: boolean, replacedBlocked: boolean, originalError?: string, replacedError?: string}>}
+     * @returns {Promise<{originalBlocked: boolean, replacedBlocked: boolean|null, originalError?: string, replacedError?: string}>}
      */
     async function testKeywordPair(originalKeyword, replacedKeyword, roomId, csrfToken) {
       const originalResult = await sendDanmaku(originalKeyword, roomId, csrfToken)
       let replacedResult = null
 
       if (!originalResult.success) {
-        // Wait 3 seconds before testing replaced keyword
+        // Wait 2 seconds before testing replaced keyword
         await new Promise(r => setTimeout(r, 2000))
         replacedResult = await sendDanmaku(replacedKeyword, roomId, csrfToken)
       }
@@ -776,50 +778,51 @@ let replacementMap = null
     }
 
     /**
-     * Tests all replacement keywords to check if they are blocked
-     * @returns {Promise<void>}
+     * Logs the result of a keyword test
+     * @param {Object} result - Test result
+     * @param {string} replacedKeyword - The replacement keyword
+     * @returns {number} 1 if original was blocked, 0 otherwise
      */
-    async function testBlockedKeywords() {
-      const confirmed = confirm(
-        '即将测试当前直播间的云端替换词与本地替换词，请避免在当前直播间正在直播时进行测试，否则可能会给主播造成困扰，是否继续？'
-      )
+    function logTestResult(result, replacedKeyword) {
+      if (result.originalBlocked) {
+        appendToLimitedLog(
+          msgLogs,
+          `  ✅ 原词被屏蔽 (错误: ${result.originalError})，测试替换词: ${replacedKeyword}`,
+          maxLogLines
+        )
 
-      if (!confirmed) {
-        return
+        if (result.replacedBlocked) {
+          appendToLimitedLog(msgLogs, `  ❌ 替换词也被屏蔽 (错误: ${result.replacedError})`, maxLogLines)
+        } else {
+          appendToLimitedLog(msgLogs, `  ✅ 替换词未被屏蔽`, maxLogLines)
+        }
+        return 1
+      } else {
+        appendToLimitedLog(msgLogs, `  ⚠️ 原词未被屏蔽，请考虑提交贡献词条`, maxLogLines)
+        return 0
       }
+    }
 
-      testBlockBtn.disabled = true
-      testBlockBtn.textContent = '测试中…'
+    /**
+     * Gets remote keywords organized by type
+     * @returns {{globalKeywords: Array<{from: string, to: string}>, roomKeywords: Array<{from: string, to: string}>}}
+     */
+    function getRemoteKeywords() {
+      const remoteKeywords = GM_getValue('remoteKeywords', null)
+      const globalKeywords = []
+      const roomKeywords = []
 
-      try {
-        // Ensure we have room ID
-        if (cachedRoomId === null) {
-          cachedRoomId = await getRoomId()
-        }
-        const roomId = cachedRoomId
-        const csrfToken = getCsrfToken()
-
-        if (!csrfToken) {
-          appendToLimitedLog(msgLogs, '❌ 未找到登录信息，请先登录 Bilibili', maxLogLines)
-          return
-        }
-
-        // Collect keywords by source
-        const remoteKeywords = GM_getValue('remoteKeywords', null)
-        const globalKeywords = []
-        const roomKeywords = []
-        const localRules = GM_getValue('replacementRules', [])
-
-        if (remoteKeywords) {
-          // Global keywords
-          const globalKw = remoteKeywords.global?.keywords || {}
-          for (const [from, to] of Object.entries(globalKw)) {
-            if (from) {
-              globalKeywords.push({ from, to })
-            }
+      if (remoteKeywords) {
+        // Global keywords
+        const globalKw = remoteKeywords.global?.keywords || {}
+        for (const [from, to] of Object.entries(globalKw)) {
+          if (from) {
+            globalKeywords.push({ from, to })
           }
+        }
 
-          // Room-specific keywords
+        // Room-specific keywords
+        if (cachedRoomId) {
           const roomData = remoteKeywords.rooms?.find(r => r.room === cachedRoomId)
           const roomKw = roomData?.keywords || {}
           for (const [from, to] of Object.entries(roomKw)) {
@@ -828,11 +831,65 @@ let replacementMap = null
             }
           }
         }
+      }
 
-        const totalCount = globalKeywords.length + roomKeywords.length + localRules.length
+      return { globalKeywords, roomKeywords }
+    }
+
+    /**
+     * Validates prerequisites for testing
+     * @returns {Promise<{valid: boolean, roomId?: number, csrfToken?: string}>}
+     */
+    async function validateTestPrerequisites() {
+      // Ensure we have room ID
+      if (cachedRoomId === null) {
+        cachedRoomId = await getRoomId()
+      }
+      const roomId = cachedRoomId
+      const csrfToken = getCsrfToken()
+
+      if (!csrfToken) {
+        appendToLimitedLog(msgLogs, '❌ 未找到登录信息，请先登录 Bilibili', maxLogLines)
+        return { valid: false }
+      }
+
+      return { valid: true, roomId, csrfToken }
+    }
+
+    /** @type {HTMLButtonElement} */
+    const testRemoteBtn = document.getElementById('testRemoteBtn')
+    /** @type {HTMLButtonElement} */
+    const testLocalBtn = document.getElementById('testLocalBtn')
+
+    /**
+     * Tests remote keywords (global + room-specific)
+     * @returns {Promise<void>}
+     */
+    async function testRemoteKeywords() {
+      const confirmed = confirm(
+        '即将测试当前直播间的云端替换词，请避免在当前直播间正在直播时进行测试，否则可能会给主播造成困扰，是否继续？'
+      )
+
+      if (!confirmed) return
+
+      testRemoteBtn.disabled = true
+      testRemoteBtn.textContent = '测试中…'
+
+      try {
+        const { valid, roomId, csrfToken } = await validateTestPrerequisites()
+        if (!valid) return
+
+        const { globalKeywords, roomKeywords } = getRemoteKeywords()
+        const totalCount = globalKeywords.length + roomKeywords.length
+
+        if (totalCount === 0) {
+          appendToLimitedLog(msgLogs, '⚠️ 没有云端替换词可供测试，请先同步云端规则', maxLogLines)
+          return
+        }
+
         appendToLimitedLog(
           msgLogs,
-          `🔵 开始测试 ${totalCount} 个替换词（全局 ${globalKeywords.length} + 房间 ${roomKeywords.length} + 本地 ${localRules.length}）`,
+          `🔵 开始测试云端替换词 ${totalCount} 个（全局 ${globalKeywords.length} + 房间 ${roomKeywords.length}）`,
           maxLogLines
         )
 
@@ -849,26 +906,11 @@ let replacementMap = null
             appendToLimitedLog(msgLogs, `[${testedCount}/${totalCount}] 测试: ${from}`, maxLogLines)
 
             const result = await testKeywordPair(from, to, roomId, csrfToken)
+            const blocked = logTestResult(result, to)
+            blockedCount += blocked
+            totalBlockedCount += blocked
 
-            if (result.originalBlocked) {
-              blockedCount++
-              totalBlockedCount++
-              appendToLimitedLog(
-                msgLogs,
-                `  ✅ 原词被屏蔽 (错误: ${result.originalError})，测试替换词: ${to}`,
-                maxLogLines
-              )
-
-              if (result.replacedBlocked) {
-                appendToLimitedLog(msgLogs, `  ❌ 替换词也被屏蔽 (错误: ${result.replacedError})`, maxLogLines)
-              } else {
-                appendToLimitedLog(msgLogs, `  ✅ 替换词未被屏蔽`, maxLogLines)
-              }
-            } else {
-              appendToLimitedLog(msgLogs, `  ⚠️ 原词未被屏蔽，请考虑提交贡献词条`, maxLogLines)
-            }
-
-            // Wait 3 seconds before next test
+            // Wait 2 seconds before next test
             if (testedCount < totalCount) {
               await new Promise(r => setTimeout(r, 2000))
             }
@@ -891,26 +933,11 @@ let replacementMap = null
             appendToLimitedLog(msgLogs, `[${testedCount}/${totalCount}] 测试: ${from}`, maxLogLines)
 
             const result = await testKeywordPair(from, to, roomId, csrfToken)
+            const blocked = logTestResult(result, to)
+            blockedCount += blocked
+            totalBlockedCount += blocked
 
-            if (result.originalBlocked) {
-              blockedCount++
-              totalBlockedCount++
-              appendToLimitedLog(
-                msgLogs,
-                `  ✅ 原词被屏蔽 (错误: ${result.originalError})，测试替换词: ${to}`,
-                maxLogLines
-              )
-
-              if (result.replacedBlocked) {
-                appendToLimitedLog(msgLogs, `  ❌ 替换词也被屏蔽 (错误: ${result.replacedError})`, maxLogLines)
-              } else {
-                appendToLimitedLog(msgLogs, `  ✅ 替换词未被屏蔽`, maxLogLines)
-              }
-            } else {
-              appendToLimitedLog(msgLogs, `  ⚠️ 原词未被屏蔽，请考虑提交贡献词条`, maxLogLines)
-            }
-
-            // Wait 3 seconds before next test
+            // Wait 2 seconds before next test
             if (testedCount < totalCount) {
               await new Promise(r => setTimeout(r, 2000))
             }
@@ -923,66 +950,82 @@ let replacementMap = null
           )
         }
 
-        // Test local rules
-        if (localRules.length > 0) {
-          appendToLimitedLog(msgLogs, `\n💾 测试本地替换词 (${localRules.length} 个)`, maxLogLines)
-          let blockedCount = 0
-
-          for (const rule of localRules) {
-            if (!rule.from) continue
-
-            testedCount++
-            appendToLimitedLog(msgLogs, `[${testedCount}/${totalCount}] 测试: ${rule.from}`, maxLogLines)
-
-            const result = await testKeywordPair(rule.from, rule.to, roomId, csrfToken)
-
-            if (result.originalBlocked) {
-              blockedCount++
-              totalBlockedCount++
-              appendToLimitedLog(
-                msgLogs,
-                `  ✅ 原词被屏蔽 (错误: ${result.originalError})，测试替换词: ${rule.to}`,
-                maxLogLines
-              )
-
-              if (result.replacedBlocked) {
-                appendToLimitedLog(msgLogs, `  ❌ 替换词也被屏蔽 (错误: ${result.replacedError})`, maxLogLines)
-              } else {
-                appendToLimitedLog(msgLogs, `  ✅ 替换词未被屏蔽`, maxLogLines)
-              }
-            } else {
-              appendToLimitedLog(msgLogs, `  ⚠️ 原词未被屏蔽，请考虑提交贡献词条`, maxLogLines)
-            }
-
-            // Wait 3 seconds before next test
-            if (testedCount < totalCount) {
-              await new Promise(r => setTimeout(r, 2000))
-            }
-          }
-
-          appendToLimitedLog(
-            msgLogs,
-            `💾 本地替换词测试完成：${blockedCount}/${localRules.length} 个原词被屏蔽`,
-            maxLogLines
-          )
-        }
-
         appendToLimitedLog(
           msgLogs,
-          `\n🔵 全部测试完成！共测试 ${totalCount} 个词，其中 ${totalBlockedCount} 个原词被屏蔽`,
+          `\n🔵 云端测试完成！共测试 ${totalCount} 个词，其中 ${totalBlockedCount} 个原词被屏蔽`,
           maxLogLines
         )
       } catch (error) {
         appendToLimitedLog(msgLogs, `🔴 测试出错：${error.message}`, maxLogLines)
       } finally {
-        testBlockBtn.disabled = false
-        testBlockBtn.textContent = '屏蔽测试'
+        testRemoteBtn.disabled = false
+        testRemoteBtn.textContent = '云端词库测试'
       }
     }
 
-    // Test block button
-    testBlockBtn.addEventListener('click', () => {
-      testBlockedKeywords()
+    /**
+     * Tests local replacement rules
+     * @returns {Promise<void>}
+     */
+    async function testLocalKeywords() {
+      const confirmed = confirm(
+        '即将测试本地替换词，请避免在当前直播间正在直播时进行测试，否则可能会给主播造成困扰，是否继续？'
+      )
+
+      if (!confirmed) return
+
+      testLocalBtn.disabled = true
+      testLocalBtn.textContent = '测试中…'
+
+      try {
+        const { valid, roomId, csrfToken } = await validateTestPrerequisites()
+        if (!valid) return
+
+        const localRules = GM_getValue('replacementRules', []).filter(rule => rule.from)
+
+        if (localRules.length === 0) {
+          appendToLimitedLog(msgLogs, '⚠️ 没有本地替换词可供测试，请先添加本地替换规则', maxLogLines)
+          return
+        }
+
+        appendToLimitedLog(msgLogs, `🔵 开始测试本地替换词 ${localRules.length} 个`, maxLogLines)
+
+        let testedCount = 0
+        let blockedCount = 0
+
+        for (const rule of localRules) {
+          testedCount++
+          appendToLimitedLog(msgLogs, `[${testedCount}/${localRules.length}] 测试: ${rule.from}`, maxLogLines)
+
+          const result = await testKeywordPair(rule.from, rule.to, roomId, csrfToken)
+          blockedCount += logTestResult(result, rule.to)
+
+          // Wait 2 seconds before next test
+          if (testedCount < localRules.length) {
+            await new Promise(r => setTimeout(r, 2000))
+          }
+        }
+
+        appendToLimitedLog(
+          msgLogs,
+          `\n🔵 本地测试完成！共测试 ${localRules.length} 个词，其中 ${blockedCount} 个原词被屏蔽`,
+          maxLogLines
+        )
+      } catch (error) {
+        appendToLimitedLog(msgLogs, `🔴 测试出错：${error.message}`, maxLogLines)
+      } finally {
+        testLocalBtn.disabled = false
+        testLocalBtn.textContent = '本地词库测试'
+      }
+    }
+
+    // Test button event listeners
+    testRemoteBtn.addEventListener('click', () => {
+      testRemoteKeywords()
+    })
+
+    testLocalBtn.addEventListener('click', () => {
+      testLocalKeywords()
     })
 
     // Max log lines input
