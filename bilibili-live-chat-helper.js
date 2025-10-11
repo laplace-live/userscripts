@@ -180,10 +180,10 @@ let replacementMap = null
       right: 4px;
       bottom: calc(4px + 30px);
       z-index: 2147483647;
-      background: white;
+      background: var(--bg1, #fff);
       display: none;
       padding: 10px;
-      box-shadow: 0 0 0 1px rgba(0, 0, 0, .2);
+      box-shadow: 0 0 0 1px var(--Ga2, rgba(0, 0, 0, .2));
       border-radius: 4px;
       min-width: 50px;
       max-height: calc(100vh - 64px);
@@ -193,7 +193,7 @@ let replacementMap = null
 
     list.innerHTML = `<div>
       <!-- Tab Navigation -->
-      <div style="display: flex; margin-block: -5px .75em; margin-inline: -10px; padding: 0 10px; gap: .25em; border-bottom: 1px solid #ddd;">
+      <div style="display: flex; margin-block: -5px .75em; margin-inline: -10px; padding: 0 10px; gap: .25em; border-bottom: 1px solid var(--Ga2, #ddd);">
         <button id="tab-dulunche" class="tab-btn" style="padding: .25em .75em; margin-bottom: -1px; border: none; background: none; cursor: pointer; border-bottom: 1px solid transparent;">独轮车</button>
         <button id="tab-fasong" class="tab-btn" style="padding: .25em .75em; margin-bottom: -1px; border: none; background: none; cursor: pointer; border-bottom: 1px solid transparent;">常规发送</button>
         <button id="tab-settings" class="tab-btn" style="padding: .25em .75em; margin-bottom: -1px; border: none; background: none; cursor: pointer; border-bottom: 1px solid transparent;">设置</button>
@@ -240,7 +240,7 @@ let replacementMap = null
       <!-- Tab Content: 全局设置 -->
       <div id="content-settings" class="tab-content" style="display: none;">
         <!-- Remote Keyword Sync -->
-        <div style="margin: .5em 0; padding-bottom: .5em; border-bottom: 1px solid #eee;">
+        <div style="margin: .5em 0; padding-bottom: .5em; border-bottom: 1px solid var(--Ga2, #eee);">
           <div style="font-weight: bold; margin-bottom: .5em;">
             云端规则替换
             <a href="https://github.com/laplace-live/public/blob/master/artifacts/livesrtream-keywords.json" target="_blank" style="color: #288bb8; text-decoration: none;">我要贡献规则</a>
@@ -257,7 +257,7 @@ let replacementMap = null
         </div>
 
         <!-- Local Replacement Rules -->
-        <div style="margin: .5em 0; padding-bottom: .5em; border-bottom: 1px solid #eee;">
+        <div style="margin: .5em 0; padding-bottom: .5em; border-bottom: 1px solid var(--Ga2, #eee);">
           <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap; margin-bottom: .5em;">
             <div style="font-weight: bold;">本地规则替换</div>
             <button id="testLocalBtn">测试本地词库</button>
@@ -521,7 +521,7 @@ let replacementMap = null
           const fromDisplay = rule.from || '(空)'
           const toDisplay = rule.to || '(空)'
           return `
-            <div style="display: flex; align-items: center; gap: .5em; padding: .2em; border-bottom: 1px solid #eee;">
+            <div style="display: flex; align-items: center; gap: .5em; padding: .2em; border-bottom: 1px solid var(--Ga2, #eee);">
               <span style="flex: 1; word-break: break-all; font-family: monospace;">${fromDisplay} → ${toDisplay}</span>
               <button class="remove-rule-btn" data-index="${index}" style="cursor: pointer; background: transparent; color: red; border: none; border-radius: 2px;">删除</button>
             </div>
