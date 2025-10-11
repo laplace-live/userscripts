@@ -409,7 +409,7 @@ let replacementMap = null
         const firstLine = template.split('\n')[0].trim()
         const preview = firstLine
           ? getGraphemes(firstLine).length > 10
-            ? `${trimText(firstLine, 10)[0]}...`
+            ? `${trimText(firstLine, 10)[0]}…`
             : firstLine
           : '(空)'
 
