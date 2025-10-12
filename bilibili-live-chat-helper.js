@@ -790,7 +790,7 @@ let replacementMap = null
         // Update status
         updateRemoteKeywordsStatus()
 
-        appendToLimitedLog(msgLogs, '✅ 云端替换规则同步成功', maxLogLines)
+        // appendToLimitedLog(msgLogs, '✅ 云端替换规则同步成功', maxLogLines)
       } catch (error) {
         remoteKeywordsStatus.textContent = `同步失败: ${error.message}`
         remoteKeywordsStatus.style.color = '#f44'
