@@ -26,6 +26,7 @@ const scriptInitVal = {
   randomColor: false,
   randomInterval: false,
   randomChar: false,
+  aiEvasion: false,
 }
 
 for (const initVal in scriptInitVal) {
@@ -234,6 +235,12 @@ let replacementMap = null
       <div id="content-fasong" class="tab-content" style="display: none;">
         <div style="margin: .5em 0;">
           <textarea id="fasongInput" placeholder="输入弹幕内容… (Enter 发送)" style="box-sizing: border-box; height: 50px; width: 100%; resize: vertical;"></textarea>
+        </div>
+        <div style="margin: .5em 0;">
+          <span style="display: inline-flex; align-items: center; gap: .25em;">
+            <input id="aiEvasion" type="checkbox" ${GM_getValue('aiEvasion') ? 'checked' : ''} />
+            <label for="aiEvasion">AI规避（发送失败时自动检测敏感词并重试）</label>
+          </span>
         </div>
       </div>
 
@@ -497,6 +504,8 @@ let replacementMap = null
 
     /** @type {HTMLTextAreaElement} */
     const fasongInput = document.getElementById('fasongInput')
+    /** @type {HTMLInputElement} */
+    const aiEvasionInput = document.getElementById('aiEvasion')
     /** @type {HTMLDivElement} */
     const replacementRulesList = document.getElementById('replacementRulesList')
     /** @type {HTMLInputElement} */
@@ -577,6 +586,65 @@ let replacementMap = null
       }
     })
 
+    // AI Evasion functionality
+    /**
+     * Calls AI endpoint to detect sensitive words
+     * @param {string} text - The text to check
+     * @returns {Promise<{hasSensitiveContent: boolean, sensitiveWords?: string[], severity?: string, categories?: string[]}>}
+     */
+    async function detectSensitiveWords(text) {
+      try {
+        const resp = await fetch('https://tts-relay.laplace.cn/laplace/chat-audit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            completionMetadata: {
+              input: text,
+            },
+          }),
+        })
+
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`)
+        }
+
+        const data = await resp.json()
+        return data.completion || { hasSensitiveContent: false }
+      } catch (error) {
+        console.error('AI detection error:', error)
+        appendToLimitedLog(msgLogs, `⚠️ AI检测服务出错：${error.message}`, maxLogLines)
+        return { hasSensitiveContent: false }
+      }
+    }
+
+    /**
+     * Inserts invisible soft hyphen characters between each character of a word
+     * @param {string} word - The word to modify
+     * @returns {string} The word with invisible characters inserted
+     */
+    function insertInvisibleChars(word) {
+      const graphemes = getGraphemes(word)
+      return graphemes.join('­')
+    }
+
+    /**
+     * Replaces sensitive words with versions that have invisible characters
+     * @param {string} text - The original text
+     * @param {string[]} sensitiveWords - Array of sensitive words to replace
+     * @returns {string} Text with sensitive words replaced
+     */
+    function replaceSensitiveWords(text, sensitiveWords) {
+      let result = text
+      for (const word of sensitiveWords) {
+        const modifiedWord = insertInvisibleChars(word)
+        // Use global replace to handle all occurrences
+        result = result.split(word).join(modifiedWord)
+      }
+      return result
+    }
+
     // Send message functionality
     async function sendMessage() {
       const originalMessage = fasongInput.value.trim()
@@ -625,11 +693,43 @@ let replacementMap = null
 
           const displayMsg = wasReplaced ? `${originalMessage} → ${processedMessage}` : processedMessage
           appendToLimitedLog(msgLogs, `❌ 手动: ${displayMsg}，原因：${errorMsg}`, maxLogLines)
+
+          // Try AI evasion if enabled
+          const aiEvasionEnabled = GM_getValue('aiEvasion', false)
+          if (aiEvasionEnabled) {
+            appendToLimitedLog(msgLogs, `🤖 AI规避已启用，正在检测敏感词…`, maxLogLines)
+
+            const detection = await detectSensitiveWords(processedMessage)
+
+            if (detection.hasSensitiveContent && detection.sensitiveWords && detection.sensitiveWords.length > 0) {
+              appendToLimitedLog(
+                msgLogs,
+                `🤖 检测到敏感词：${detection.sensitiveWords.join(', ')}，正在尝试规避…`,
+                maxLogLines
+              )
+
+              const evadedMessage = replaceSensitiveWords(processedMessage, detection.sensitiveWords)
+              const retryResult = await sendDanmaku(evadedMessage, roomId, csrfToken)
+
+              if (retryResult.success) {
+                appendToLimitedLog(msgLogs, `✅ AI规避成功: ${evadedMessage}`, maxLogLines)
+              } else {
+                appendToLimitedLog(msgLogs, `❌ AI规避失败: ${evadedMessage}，原因：${retryResult.error}`, maxLogLines)
+              }
+            } else {
+              appendToLimitedLog(msgLogs, `⚠️ 无法检测到敏感词，请手动检查`, maxLogLines)
+            }
+          }
         }
       } catch (error) {
         appendToLimitedLog(msgLogs, `🔴 发送出错：${error.message}`, maxLogLines)
       }
     }
+
+    // AI Evasion checkbox event listener
+    aiEvasionInput.addEventListener('input', () => {
+      GM_setValue('aiEvasion', aiEvasionInput.checked)
+    })
 
     // Allow Enter to send message
     fasongInput.addEventListener('keydown', e => {
