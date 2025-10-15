@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LAPLACE 弹幕助手 - 哔哩哔哩直播间独轮车、弹幕发送
 // @namespace    https://greasyfork.org/users/1524935
-// @version      2.1.1
+// @version      2.1.2
 // @description  这是 bilibili 直播间简易版独轮车，基于 quiet/thusiant cmd 版本 https://greasyfork.org/scripts/421507 继续维护而来
 // @author       laplace-live
 // @license      AGPL-3.0
@@ -10,7 +10,274 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
+// @run-at       document-start
 // ==/UserScript==
+
+/**
+ * Gets the spm_prefix value from the meta tag for web_location
+ * @returns {string} The spm_prefix value
+ */
+function getSpmPrefix() {
+  const metaTag = document.querySelector('meta[name="spm_prefix"]')
+  return metaTag?.getAttribute('content') || '444.8'
+}
+
+// Hijack XHR to get wbi_img, which takes Claude 2 mins to bypass LOL😁
+/** @type {{img_key: string, sub_key: string}|null} */
+let cachedWbiKeys = null
+
+;(() => {
+  const originalOpen = XMLHttpRequest.prototype.open
+  const originalSend = XMLHttpRequest.prototype.send
+
+  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+    this._url = url
+    return originalOpen.apply(this, [method, url, ...rest])
+  }
+
+  XMLHttpRequest.prototype.send = function (...args) {
+    if (this._url?.includes('/x/web-interface/nav')) {
+      console.log('[LAPLACE Chatterbox Helper] Intercepted request:', this._url)
+
+      this.addEventListener('load', function () {
+        try {
+          const data = JSON.parse(this.responseText)
+          if (data?.data?.wbi_img) {
+            console.log('[LAPLACE Chatterbox Helper] wbi_img:', data.data.wbi_img)
+
+            // Extract keys from URLs
+            const img_url = data.data.wbi_img.img_url
+            const sub_url = data.data.wbi_img.sub_url
+
+            // Extract filename without extension (the key is in the filename)
+            const img_key = img_url.split('/').pop().split('.')[0]
+            const sub_key = sub_url.split('/').pop().split('.')[0]
+
+            cachedWbiKeys = { img_key, sub_key }
+            console.log('[LAPLACE Chatterbox Helper] Extracted WBI keys:', cachedWbiKeys)
+          } else {
+            console.log('[LAPLACE Chatterbox Helper] Response received but wbi_img not found:', data)
+          }
+        } catch (err) {
+          console.error('[LAPLACE Chatterbox Helper] Error parsing response:', err)
+        }
+      })
+    }
+
+    return originalSend.apply(this, args)
+  }
+})()
+
+/**
+ * @typedef {Object} BilibiliWbiKeys
+ * @property {string} img_key - Image key extracted from wbi_img
+ * @property {string} sub_key - Sub key extracted from wbi_img
+ */
+
+// https://s1.hdslb.com/bfs/static/laputa-home/client/assets/vendor.7679ec63.js
+// function getMixinKey(ae){var oe=[46,47,18,2,53,8,23,32,15,50,10,31,58,3,45,35,27,43,5,49,33,9,42,19,29,28,14,39,12,38,41,13,37,48,7,16,24,55,40,61,26,17,0,1,60,51,30,4,22,25,54,21,56,59,6,63,57,62,11,36,20,34,44,52]
+const mixinKeyEncTab = [
+  46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41,
+  13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34,
+  44, 52,
+]
+
+/**
+ * Computes MD5 hash of a string in 2025😁
+ * @param {string} str - The string to hash
+ * @returns {string} The MD5 hash in hexadecimal format
+ */
+function md5(str) {
+  function rotateLeft(n, s) {
+    return (n << s) | (n >>> (32 - s))
+  }
+
+  function addUnsigned(x, y) {
+    const lsw = (x & 0xffff) + (y & 0xffff)
+    const msw = (x >> 16) + (y >> 16) + (lsw >> 16)
+    return (msw << 16) | (lsw & 0xffff)
+  }
+
+  function cmn(q, a, b, x, s, t) {
+    return addUnsigned(rotateLeft(addUnsigned(addUnsigned(a, q), addUnsigned(x, t)), s), b)
+  }
+
+  function ff(a, b, c, d, x, s, t) {
+    return cmn((b & c) | (~b & d), a, b, x, s, t)
+  }
+
+  function gg(a, b, c, d, x, s, t) {
+    return cmn((b & d) | (c & ~d), a, b, x, s, t)
+  }
+
+  function hh(a, b, c, d, x, s, t) {
+    return cmn(b ^ c ^ d, a, b, x, s, t)
+  }
+
+  function ii(a, b, c, d, x, s, t) {
+    return cmn(c ^ (b | ~d), a, b, x, s, t)
+  }
+
+  function convertToWordArray(str) {
+    const wordArray = []
+    for (let i = 0; i < str.length * 8; i += 8) {
+      wordArray[i >> 5] |= (str.charCodeAt(i / 8) & 0xff) << (i % 32)
+    }
+    return wordArray
+  }
+
+  function wordToHex(value) {
+    let hex = ''
+    for (let i = 0; i < 4; i++) {
+      hex += ((value >> (i * 8 + 4)) & 0x0f).toString(16) + ((value >> (i * 8)) & 0x0f).toString(16)
+    }
+    return hex
+  }
+
+  const x = convertToWordArray(str)
+  let a = 0x67452301
+  let b = 0xefcdab89
+  let c = 0x98badcfe
+  let d = 0x10325476
+
+  x[str.length >> 2] |= 0x80 << ((str.length % 4) * 8)
+  x[(((str.length + 8) >> 6) << 4) + 14] = str.length * 8
+
+  for (let i = 0; i < x.length; i += 16) {
+    const oldA = a
+    const oldB = b
+    const oldC = c
+    const oldD = d
+
+    a = ff(a, b, c, d, x[i + 0], 7, 0xd76aa478)
+    d = ff(d, a, b, c, x[i + 1], 12, 0xe8c7b756)
+    c = ff(c, d, a, b, x[i + 2], 17, 0x242070db)
+    b = ff(b, c, d, a, x[i + 3], 22, 0xc1bdceee)
+    a = ff(a, b, c, d, x[i + 4], 7, 0xf57c0faf)
+    d = ff(d, a, b, c, x[i + 5], 12, 0x4787c62a)
+    c = ff(c, d, a, b, x[i + 6], 17, 0xa8304613)
+    b = ff(b, c, d, a, x[i + 7], 22, 0xfd469501)
+    a = ff(a, b, c, d, x[i + 8], 7, 0x698098d8)
+    d = ff(d, a, b, c, x[i + 9], 12, 0x8b44f7af)
+    c = ff(c, d, a, b, x[i + 10], 17, 0xffff5bb1)
+    b = ff(b, c, d, a, x[i + 11], 22, 0x895cd7be)
+    a = ff(a, b, c, d, x[i + 12], 7, 0x6b901122)
+    d = ff(d, a, b, c, x[i + 13], 12, 0xfd987193)
+    c = ff(c, d, a, b, x[i + 14], 17, 0xa679438e)
+    b = ff(b, c, d, a, x[i + 15], 22, 0x49b40821)
+
+    a = gg(a, b, c, d, x[i + 1], 5, 0xf61e2562)
+    d = gg(d, a, b, c, x[i + 6], 9, 0xc040b340)
+    c = gg(c, d, a, b, x[i + 11], 14, 0x265e5a51)
+    b = gg(b, c, d, a, x[i + 0], 20, 0xe9b6c7aa)
+    a = gg(a, b, c, d, x[i + 5], 5, 0xd62f105d)
+    d = gg(d, a, b, c, x[i + 10], 9, 0x02441453)
+    c = gg(c, d, a, b, x[i + 15], 14, 0xd8a1e681)
+    b = gg(b, c, d, a, x[i + 4], 20, 0xe7d3fbc8)
+    a = gg(a, b, c, d, x[i + 9], 5, 0x21e1cde6)
+    d = gg(d, a, b, c, x[i + 14], 9, 0xc33707d6)
+    c = gg(c, d, a, b, x[i + 3], 14, 0xf4d50d87)
+    b = gg(b, c, d, a, x[i + 8], 20, 0x455a14ed)
+    a = gg(a, b, c, d, x[i + 13], 5, 0xa9e3e905)
+    d = gg(d, a, b, c, x[i + 2], 9, 0xfcefa3f8)
+    c = gg(c, d, a, b, x[i + 7], 14, 0x676f02d9)
+    b = gg(b, c, d, a, x[i + 12], 20, 0x8d2a4c8a)
+
+    a = hh(a, b, c, d, x[i + 5], 4, 0xfffa3942)
+    d = hh(d, a, b, c, x[i + 8], 11, 0x8771f681)
+    c = hh(c, d, a, b, x[i + 11], 16, 0x6d9d6122)
+    b = hh(b, c, d, a, x[i + 14], 23, 0xfde5380c)
+    a = hh(a, b, c, d, x[i + 1], 4, 0xa4beea44)
+    d = hh(d, a, b, c, x[i + 4], 11, 0x4bdecfa9)
+    c = hh(c, d, a, b, x[i + 7], 16, 0xf6bb4b60)
+    b = hh(b, c, d, a, x[i + 10], 23, 0xbebfbc70)
+    a = hh(a, b, c, d, x[i + 13], 4, 0x289b7ec6)
+    d = hh(d, a, b, c, x[i + 0], 11, 0xeaa127fa)
+    c = hh(c, d, a, b, x[i + 3], 16, 0xd4ef3085)
+    b = hh(b, c, d, a, x[i + 6], 23, 0x04881d05)
+    a = hh(a, b, c, d, x[i + 9], 4, 0xd9d4d039)
+    d = hh(d, a, b, c, x[i + 12], 11, 0xe6db99e5)
+    c = hh(c, d, a, b, x[i + 15], 16, 0x1fa27cf8)
+    b = hh(b, c, d, a, x[i + 2], 23, 0xc4ac5665)
+
+    a = ii(a, b, c, d, x[i + 0], 6, 0xf4292244)
+    d = ii(d, a, b, c, x[i + 7], 10, 0x432aff97)
+    c = ii(c, d, a, b, x[i + 14], 15, 0xab9423a7)
+    b = ii(b, c, d, a, x[i + 5], 21, 0xfc93a039)
+    a = ii(a, b, c, d, x[i + 12], 6, 0x655b59c3)
+    d = ii(d, a, b, c, x[i + 3], 10, 0x8f0ccc92)
+    c = ii(c, d, a, b, x[i + 10], 15, 0xffeff47d)
+    b = ii(b, c, d, a, x[i + 1], 21, 0x85845dd1)
+    a = ii(a, b, c, d, x[i + 8], 6, 0x6fa87e4f)
+    d = ii(d, a, b, c, x[i + 15], 10, 0xfe2ce6e0)
+    c = ii(c, d, a, b, x[i + 6], 15, 0xa3014314)
+    b = ii(b, c, d, a, x[i + 13], 21, 0x4e0811a1)
+    a = ii(a, b, c, d, x[i + 4], 6, 0xf7537e82)
+    d = ii(d, a, b, c, x[i + 11], 10, 0xbd3af235)
+    c = ii(c, d, a, b, x[i + 2], 15, 0x2ad7d2bb)
+    b = ii(b, c, d, a, x[i + 9], 21, 0xeb86d391)
+
+    a = addUnsigned(a, oldA)
+    b = addUnsigned(b, oldB)
+    c = addUnsigned(c, oldC)
+    d = addUnsigned(d, oldD)
+  }
+
+  return wordToHex(a) + wordToHex(b) + wordToHex(c) + wordToHex(d)
+}
+
+/**
+ * Applies character order scrambling encoding to imgKey and subKey
+ * @param {string} orig - Original string to encode (imgKey + subKey concatenated)
+ * @returns {string} Mixed key (first 32 characters)
+ */
+function getMixinKey(orig) {
+  return mixinKeyEncTab
+    .map(n => orig[n])
+    .join('')
+    .slice(0, 32)
+}
+
+/**
+ * Adds wts field to request parameters and performs wbi signature
+ * @param {Object.<string, string|number>} params - Request parameters
+ * @param {BilibiliWbiKeys} wbiKeys - WBI keys object
+ * @returns {string} Query string with w_rid and wts parameters
+ */
+function encodeWbi(params, wbiKeys) {
+  const mixin_key = getMixinKey(wbiKeys.img_key + wbiKeys.sub_key)
+  const currentTime = Math.round(Date.now() / 1000)
+  const charaFilter = /[!'()*]/g
+
+  // Add wts field
+  /** @type {Object.<string, string|number>} */
+  const paramsWithWts = { ...params, wts: currentTime }
+
+  // Sort parameters by key (only for signature calculation)
+  const sortedQuery = Object.keys(paramsWithWts)
+    .sort()
+    .map(key => {
+      // Filter "!'()*" characters from value
+      const resolvedValue = paramsWithWts[key]?.toString() || ''
+      const value = resolvedValue.replace(charaFilter, '')
+      return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+    })
+    .join('&')
+
+  // Calculate w_rid
+  const wbi_sign = md5(sortedQuery + mixin_key)
+
+  // Build returned query string (maintain original order, wts at the end)
+  const unsortedQuery = Object.keys(params)
+    .map(key => {
+      const resolvedValue = params[key]?.toString() || ''
+      const value = resolvedValue.replace(charaFilter, '')
+      return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+    })
+    .join('&')
+
+  return `${unsortedQuery}&w_rid=${wbi_sign}&wts=${currentTime}`
+}
 
 /** @type {string[]} */
 const MsgTemplates = GM_getValue('MsgTemplates', [])
@@ -1287,7 +1554,19 @@ async function sendDanmaku(message, roomId, csrfToken) {
   form.append('csrf_token', csrfToken)
 
   try {
-    const resp = await fetch('https://api.live.bilibili.com/msg/send', {
+    // Add silly queries😁
+    let query = ''
+    if (cachedWbiKeys) {
+      query = encodeWbi(
+        {
+          web_location: getSpmPrefix(),
+        },
+        cachedWbiKeys
+      )
+    }
+
+    const url = `https://api.live.bilibili.com/msg/send?${query}`
+    const resp = await fetch(url, {
       method: 'POST',
       credentials: 'include',
       body: form,
