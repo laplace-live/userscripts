@@ -14,6 +14,19 @@
 // ==/UserScript==
 
 /**
+ * API configs
+ * @const {Object.<string, string>}
+ */
+const BASE_URL = {
+  BILIBILI_ROOM_INIT: 'https://api.live.bilibili.com/room/v1/Room/room_init',
+  BILIBILI_MSG_SEND: 'https://api.live.bilibili.com/msg/send',
+  BILIBILI_MSG_CONFIG: 'https://api.live.bilibili.com/xlive/web-room/v1/dM/AjaxSetConfig',
+  LAPLACE_CHAT_AUDIT: 'https://edge-workers.laplace.cn/laplace/chat-audit',
+  // REMOTE_KEYWORDS: 'https://raw.githubusercontent.com/laplace-live/public/refs/heads/master/artifacts/livesrtream-keywords.json',
+  REMOTE_KEYWORDS: 'https://workers.vrp.moe/gh-raw/laplace-live/public/master/artifacts/livesrtream-keywords.json',
+}
+
+/**
  * Gets the spm_prefix value from the meta tag for web_location
  * @returns {string} The spm_prefix value
  */
@@ -861,7 +874,7 @@ let replacementMap = null
      */
     async function detectSensitiveWords(text) {
       try {
-        const resp = await fetch('https://edge-workers.laplace.cn/laplace/chat-audit', {
+        const resp = await fetch(BASE_URL.LAPLACE_CHAT_AUDIT, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1011,10 +1024,6 @@ let replacementMap = null
 
     // ===== Remote Keywords Sync =====
 
-    // const REMOTE_KEYWORDS_URL =
-    //   'https://raw.githubusercontent.com/laplace-live/public/refs/heads/master/artifacts/livesrtream-keywords.json'
-    const REMOTE_KEYWORDS_URL =
-      'https://workers.vrp.moe/gh-raw/laplace-live/public/master/artifacts/livesrtream-keywords.json'
     const SYNC_INTERVAL = 10 * 60 * 1000 // 10 minutes in milliseconds
 
     /** @type {HTMLButtonElement} */
@@ -1029,7 +1038,7 @@ let replacementMap = null
      * @returns {Promise<{global: {keywords: Object}, rooms: Array}>}
      */
     async function fetchRemoteKeywords() {
-      const response = await fetch(REMOTE_KEYWORDS_URL)
+      const response = await fetch(BASE_URL.REMOTE_KEYWORDS)
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
@@ -1519,7 +1528,7 @@ async function getRoomId(url = window.location.href) {
   const shortUid = extractRoomNumber(url)
 
   try {
-    const room = await fetch(`https://api.live.bilibili.com/room/v1/Room/room_init?id=${shortUid}`, {
+    const room = await fetch(`${BASE_URL.BILIBILI_ROOM_INIT}?id=${shortUid}`, {
       method: 'GET',
       credentials: 'include',
     })
@@ -1574,7 +1583,7 @@ async function sendDanmaku(message, roomId, csrfToken) {
       )
     }
 
-    const url = `https://api.live.bilibili.com/msg/send?${query}`
+    const url = `${BASE_URL.BILIBILI_MSG_SEND}?${query}`
     const resp = await fetch(url, {
       method: 'POST',
       credentials: 'include',
@@ -1689,7 +1698,7 @@ async function loop() {
             configForm.append('visit_id', '')
 
             try {
-              await fetch('https://api.live.bilibili.com/xlive/web-room/v1/dM/AjaxSetConfig', {
+              await fetch(BASE_URL.BILIBILI_MSG_CONFIG, {
                 method: 'POST',
                 credentials: 'include',
                 body: configForm,
