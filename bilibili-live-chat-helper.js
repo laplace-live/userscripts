@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LAPLACE 弹幕助手 - 哔哩哔哩直播间独轮车、弹幕发送
 // @namespace    https://greasyfork.org/users/1524935
-// @version      2.1.3
+// @version      2.1.4
 // @description  这是 bilibili 直播间简易版独轮车，基于 quiet/thusiant cmd 版本 https://greasyfork.org/scripts/421507 继续维护而来
 // @author       laplace-live
 // @license      AGPL-3.0
@@ -307,6 +307,7 @@ const scriptInitVal = {
   randomInterval: false,
   randomChar: false,
   aiEvasion: false,
+  forceScrollDanmaku: false,
 }
 
 for (const initVal in scriptInitVal) {
@@ -560,12 +561,23 @@ let replacementMap = null
         </div>
 
         <!-- Log Settings -->
-        <div style="margin: .5em 0;">
+        <div style="margin: .5em 0; padding-bottom: .5em; border-bottom: 1px solid var(--Ga2, #eee);">
           <div style="font-weight: bold; margin-bottom: .5em;">日志设置</div>
           <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap;">
             <label for="maxLogLinesInput" style="color: #666;">最大日志行数:</label>
             <input id="maxLogLinesInput" type="number" min="1" max="1000" value="${GM_getValue('maxLogLines')}" style="width: 80px;" />
             <span style="color: #999; font-size: 0.9em;">(1-1000)</span>
+          </div>
+        </div>
+
+        <!-- Other Settings -->
+        <div style="margin: .5em 0;">
+          <div style="font-weight: bold; margin-bottom: .5em;">其他设置</div>
+          <div style="display: flex; gap: .5em; align-items: center; flex-wrap: wrap;">
+            <span style="display: inline-flex; align-items: center; gap: .25em;">
+              <input id="forceScrollDanmaku" type="checkbox" ${GM_getValue('forceScrollDanmaku') ? 'checked' : ''} />
+              <label for="forceScrollDanmaku">脚本载入时强制配置弹幕位置为滚动方向</label>
+            </span>
           </div>
         </div>
       </div>
@@ -1419,6 +1431,13 @@ let replacementMap = null
       GM_setValue('maxLogLines', value)
     })
 
+    // Other Settings event listeners
+    /** @type {HTMLInputElement} */
+    const forceScrollDanmakuInput = document.getElementById('forceScrollDanmaku')
+    forceScrollDanmakuInput.addEventListener('input', () => {
+      GM_setValue('forceScrollDanmaku', forceScrollDanmakuInput.checked)
+    })
+
     // Set the callback for when room ID is ready
     onRoomIdReadyCallback = updateRemoteKeywordsStatus
 
@@ -1634,6 +1653,30 @@ async function loop() {
       // Update remote keywords status now that we have the room ID
       if (onRoomIdReadyCallback) {
         onRoomIdReadyCallback()
+      }
+
+      // Initialize config on script startup (if enabled)
+      const forceScrollDanmaku = GM_getValue('forceScrollDanmaku')
+      if (forceScrollDanmaku) {
+        const initCsrfToken = getCsrfToken()
+        if (initCsrfToken) {
+          const initConfigForm = new FormData()
+          initConfigForm.append('room_id', String(cachedRoomId))
+          initConfigForm.append('mode', '1')
+          initConfigForm.append('csrf_token', initCsrfToken)
+          initConfigForm.append('csrf', initCsrfToken)
+          initConfigForm.append('visit_id', '')
+
+          try {
+            await fetch(BASE_URL.BILIBILI_MSG_CONFIG, {
+              method: 'POST',
+              credentials: 'include',
+              body: initConfigForm,
+            })
+          } catch {
+            // Silently fail - config init is non-critical
+          }
+        }
       }
     } catch (error) {
       appendToLimitedLog(msgLogs, `❌ 获取房间ID失败: ${error.message}`, maxLogLines)
