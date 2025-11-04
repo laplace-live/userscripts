@@ -18,9 +18,25 @@
  * @const {Object.<string, string>}
  */
 const BASE_URL = {
+  /**
+   * Fetches room basic info
+   * @method GET
+   * @param {string} id - room ID
+   */
   BILIBILI_ROOM_INIT: 'https://api.live.bilibili.com/room/v1/Room/room_init',
+
+  /**
+   * Send chat
+   * @method POST
+   */
   BILIBILI_MSG_SEND: 'https://api.live.bilibili.com/msg/send',
+
+  /**
+   * Chat config
+   * @method POST
+   */
   BILIBILI_MSG_CONFIG: 'https://api.live.bilibili.com/xlive/web-room/v1/dM/AjaxSetConfig',
+
   LAPLACE_CHAT_AUDIT: 'https://edge-workers.laplace.cn/laplace/chat-audit',
   // REMOTE_KEYWORDS: 'https://raw.githubusercontent.com/laplace-live/public/refs/heads/master/artifacts/livesrtream-keywords.json',
   REMOTE_KEYWORDS: 'https://workers.vrp.moe/gh-raw/laplace-live/public/master/artifacts/livesrtream-keywords.json',
