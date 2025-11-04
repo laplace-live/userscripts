@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LAPLACE 弹幕助手 - 哔哩哔哩直播间独轮车、弹幕发送
 // @namespace    https://greasyfork.org/users/1524935
-// @version      2.1.4
+// @version      2.2.0
 // @description  这是 bilibili 直播间简易版独轮车，基于 quiet/thusiant cmd 版本 https://greasyfork.org/scripts/421507 继续维护而来
 // @author       laplace-live
 // @license      AGPL-3.0
@@ -28,6 +28,9 @@ const BASE_URL = {
   /**
    * Send chat
    * @method POST
+   * @param {string} web_location - SPM prefix
+   * @param {string} w_rid - WBI signature
+   * @param {string} wts - WBI timestamp
    */
   BILIBILI_MSG_SEND: 'https://api.live.bilibili.com/msg/send',
 
@@ -37,10 +40,60 @@ const BASE_URL = {
    */
   BILIBILI_MSG_CONFIG: 'https://api.live.bilibili.com/xlive/web-room/v1/dM/AjaxSetConfig',
 
+  /**
+   * Get danmaku config by group
+   * @method GET
+   * @param {string} room_id - room ID
+   * @param {string} web_location - SPM prefix
+   * @param {string} w_rid - WBI signature
+   * @param {string} wts - WBI timestamp
+   */
+  BILIBILI_GET_DM_CONFIG: 'https://api.live.bilibili.com/xlive/web-room/v1/dM/GetDMConfigByGroup',
+
   LAPLACE_CHAT_AUDIT: 'https://edge-workers.laplace.cn/laplace/chat-audit',
   // REMOTE_KEYWORDS: 'https://raw.githubusercontent.com/laplace-live/public/refs/heads/master/artifacts/livesrtream-keywords.json',
   REMOTE_KEYWORDS: 'https://workers.vrp.moe/gh-raw/laplace-live/public/master/artifacts/livesrtream-keywords.json',
 }
+
+/**
+ * @typedef {Object} DanmakuColor
+ * @property {string} name - Color name
+ * @property {string} color - Color value in decimal
+ * @property {string} color_hex - Color value in hex
+ * @property {number} status - Status (0: disabled, 1: enabled)
+ * @property {number} weight - Weight for sorting
+ * @property {number} color_id - Color ID
+ * @property {number} origin - Origin group
+ */
+
+/**
+ * @typedef {Object} DanmakuColorGroup
+ * @property {string} name - Group name
+ * @property {number} sort - Sort order
+ * @property {DanmakuColor[]} color - Available colors in this group
+ */
+
+/**
+ * @typedef {Object} DanmakuMode
+ * @property {string} name - Mode name
+ * @property {number} mode - Mode value (1: scroll, 4: bottom, 5: top)
+ * @property {string} type - Mode type string
+ * @property {number} status - Status (0: disabled, 1: enabled)
+ */
+
+/**
+ * @typedef {Object} DanmakuConfigData
+ * @property {DanmakuColorGroup[]} group - Color groups
+ * @property {DanmakuMode[]} mode - Display modes
+ */
+
+/**
+ * @typedef {Object} DanmakuConfigResponse
+ * @property {number} code - Response code
+ * @property {DanmakuConfigData} data - Config data
+ * @property {string} message - Response message
+ * @property {string} msg - Response msg
+ */
 
 /**
  * Gets the spm_prefix value from the meta tag for web_location
@@ -98,10 +151,30 @@ let cachedWbiKeys = null
 })()
 
 /**
+ * Waits for WBI keys to become available via XHR interception
+ * @param {number} timeout - Maximum time to wait in ms
+ * @param {number} interval - Polling interval in ms
+ * @returns {Promise<boolean>} True if keys are available, false if timeout
+ */
+async function waitForWbiKeys(timeout = 5000, interval = 100) {
+  const startTime = Date.now()
+  while (!cachedWbiKeys) {
+    if (Date.now() - startTime > timeout) {
+      return false
+    }
+    await new Promise(r => setTimeout(r, interval))
+  }
+  return true
+}
+
+/**
  * @typedef {Object} BilibiliWbiKeys
  * @property {string} img_key - Image key extracted from wbi_img
  * @property {string} sub_key - Sub key extracted from wbi_img
  */
+
+/** @type {string[]|null} */
+let availableDanmakuColors = null
 
 // https://s1.hdslb.com/bfs/static/laputa-home/client/assets/vendor.7679ec63.js
 // function getMixinKey(ae){var oe=[46,47,18,2,53,8,23,32,15,50,10,31,58,3,45,35,27,43,5,49,33,9,42,19,29,28,14,39,12,38,41,13,37,48,7,16,24,55,40,61,26,17,0,1,60,51,30,4,22,25,54,21,56,59,6,63,57,62,11,36,20,34,44,52]
@@ -1671,6 +1744,45 @@ async function loop() {
         onRoomIdReadyCallback()
       }
 
+      // Fetch danmaku config on script startup
+      await waitForWbiKeys()
+      if (cachedWbiKeys) {
+        try {
+          const configQuery = encodeWbi(
+            {
+              room_id: String(cachedRoomId),
+              web_location: getSpmPrefix(),
+            },
+            cachedWbiKeys
+          )
+          const configUrl = `${BASE_URL.BILIBILI_GET_DM_CONFIG}?${configQuery}`
+          /** @type {DanmakuConfigResponse} */
+          const configResp = await fetch(configUrl, {
+            method: 'GET',
+            credentials: 'include',
+          }).then(r => r.json())
+
+          // Extract available colors from all groups
+          if (configResp?.data?.group) {
+            const colors = []
+            for (const group of configResp.data.group) {
+              for (const color of group.color) {
+                // Only include enabled colors (status === 1)
+                if (color.status === 1) {
+                  colors.push(`0x${color.color_hex}`)
+                }
+              }
+            }
+            if (colors.length > 0) {
+              availableDanmakuColors = colors
+              console.log('[LAPLACE Chatterbox Helper] Available colors:', colors)
+            }
+          }
+        } catch {
+          // Silently fail - config fetch is non-critical
+        }
+      }
+
       // Initialize config on script startup (if enabled)
       const forceScrollDanmaku = GM_getValue('forceScrollDanmaku')
       if (forceScrollDanmaku) {
@@ -1734,7 +1846,8 @@ async function loop() {
           const wasReplaced = originalMessage !== processedMessage
 
           if (enableRandomColor) {
-            const colorSet = [
+            // Use available colors from API or fallback to hardcoded set
+            const colorSet = availableDanmakuColors || [
               '0xe33fff',
               '0x54eed8',
               '0x58c1de',
