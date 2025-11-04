@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LAPLACE 弹幕助手 - 哔哩哔哩直播间独轮车、弹幕发送
 // @namespace    https://greasyfork.org/users/1524935
-// @version      2.1.2
+// @version      2.1.3
 // @description  这是 bilibili 直播间简易版独轮车，基于 quiet/thusiant cmd 版本 https://greasyfork.org/scripts/421507 继续维护而来
 // @author       laplace-live
 // @license      AGPL-3.0
@@ -1518,14 +1518,23 @@ function getCsrfToken() {
 async function getRoomId(url = window.location.href) {
   const shortUid = extractRoomNumber(url)
 
-  const room = await fetch(`https://api.live.bilibili.com/room/v1/Room/room_init?id=${shortUid}`, {
-    method: 'GET',
-    credentials: 'include',
-  })
+  try {
+    const room = await fetch(`https://api.live.bilibili.com/room/v1/Room/room_init?id=${shortUid}`, {
+      method: 'GET',
+      credentials: 'include',
+    })
 
-  /** @type {{data: {room_id: number}}} */
-  const roomData = await room.json()
-  return roomData.data.room_id
+    if (!room.ok) {
+      throw new Error(`HTTP ${room.status}: ${room.statusText}`)
+    }
+
+    /** @type {{data: {room_id: number}}} */
+    const roomData = await room.json()
+    return roomData.data.room_id
+  } catch (error) {
+    console.error('Failed to get room ID:', error)
+    throw error
+  }
 }
 
 /**
@@ -1610,11 +1619,17 @@ async function loop() {
 
   // Fetch and cache room ID on first call
   if (cachedRoomId === null) {
-    cachedRoomId = await getRoomId()
-    buildReplacementMap() // Rebuild map with room-specific keywords
-    // Update remote keywords status now that we have the room ID
-    if (onRoomIdReadyCallback) {
-      onRoomIdReadyCallback()
+    try {
+      cachedRoomId = await getRoomId()
+      buildReplacementMap() // Rebuild map with room-specific keywords
+      // Update remote keywords status now that we have the room ID
+      if (onRoomIdReadyCallback) {
+        onRoomIdReadyCallback()
+      }
+    } catch (error) {
+      appendToLimitedLog(msgLogs, `❌ 获取房间ID失败: ${error.message}`, maxLogLines)
+      await new Promise(r => setTimeout(r, 5000))
+      return // Exit and let the loop restart
     }
   }
   const roomId = cachedRoomId
@@ -1673,11 +1688,15 @@ async function loop() {
             configForm.append('csrf', csrfToken)
             configForm.append('visit_id', '')
 
-            const _updateConfig = await fetch('https://api.live.bilibili.com/xlive/web-room/v1/dM/AjaxSetConfig', {
-              method: 'POST',
-              credentials: 'include',
-              body: configForm,
-            })
+            try {
+              await fetch('https://api.live.bilibili.com/xlive/web-room/v1/dM/AjaxSetConfig', {
+                method: 'POST',
+                credentials: 'include',
+                body: configForm,
+              })
+            } catch {
+              // Silently fail - color update is non-critical
+            }
           }
 
           const result = await sendDanmaku(processedMessage, roomId, csrfToken)
